@@ -4,8 +4,8 @@
     [Released under MIT License. Please refer to license.txt for details]
 ========================================== */
 
-#include <setjmp.h>
 #include "unity.h"
+#include <setjmp.h>
 #include <string.h>
 
 // Dividing by these constants produces +/- infinity.
@@ -19,30 +19,44 @@ static const _UD d_zero = 0.0;
 #endif
 
 #define EXPECT_ABORT_BEGIN \
+    startPutcharSpy();     \
     if (TEST_PROTECT())    \
     {
 
 #define VERIFY_FAILS_END                                                       \
     }                                                                          \
+    endPutcharSpy(); /* start/end Spy to suppress output of failure message */ \
     Unity.CurrentTestFailed = (Unity.CurrentTestFailed == 1) ? 0 : 1;          \
     if (Unity.CurrentTestFailed == 1) {                                        \
       SetToOneMeanWeAlreadyCheckedThisGuy = 1;                                 \
-      UnityPrint("[[[[ Previous Test Should Have Failed But Did Not ]]]]");    \
+      UnityPrintNumberUnsigned(Unity.CurrentTestLineNumber);                   \
+      UNITY_OUTPUT_CHAR(':');                                                  \
+      UnityPrint(Unity.CurrentTestName);                                       \
+      UnityPrint(":FAIL: [[[[ Test Should Have Failed But Did Not ]]]]");      \
       UNITY_OUTPUT_CHAR('\n');                                                 \
     }
 
 #define VERIFY_IGNORES_END                                                     \
     }                                                                          \
+    endPutcharSpy(); /* start/end Spy to suppress output of ignore message */  \
     Unity.CurrentTestFailed = (Unity.CurrentTestIgnored == 1) ? 0 : 1;         \
     Unity.CurrentTestIgnored = 0;                                              \
     if (Unity.CurrentTestFailed == 1) {                                        \
       SetToOneMeanWeAlreadyCheckedThisGuy = 1;                                 \
-      UnityPrint("[[[[ Previous Test Should Have Ignored But Did Not ]]]]");   \
+      UnityPrintNumberUnsigned(Unity.CurrentTestLineNumber);                   \
+      UNITY_OUTPUT_CHAR(':');                                                  \
+      UnityPrint(Unity.CurrentTestName);                                       \
+      UnityPrint(":FAIL: [[[[ Test Should Have Ignored But Did Not ]]]]");     \
       UNITY_OUTPUT_CHAR('\n');                                                 \
     }
 
-int SetToOneToFailInTearDown;
-int SetToOneMeanWeAlreadyCheckedThisGuy;
+void startPutcharSpy(void);
+void endPutcharSpy(void);
+char* getBufferPutcharSpy(void);
+void putcharSpy(int c);
+
+static int SetToOneToFailInTearDown;
+static int SetToOneMeanWeAlreadyCheckedThisGuy;
 
 void setUp(void)
 {
@@ -56,7 +70,7 @@ void tearDown(void)
     TEST_FAIL_MESSAGE("<= Failed in tearDown");
   if ((SetToOneMeanWeAlreadyCheckedThisGuy == 0) && (Unity.CurrentTestFailed > 0))
   {
-    UnityPrint("[[[[ Previous Test Should Have Passed But Did Not ]]]]");
+    UnityPrint(": [[[[ Test Should Have Passed But Did Not ]]]]");
     UNITY_OUTPUT_CHAR('\n');
   }
 }
@@ -71,6 +85,7 @@ void testUnitySizeInitializationReminder(void)
                      "still correct.";
 
     /* Define a structure with all the same fields as `struct _Unity`. */
+#ifdef UNITY_EXCLUDE_DETAILS
     struct {
         const char* TestFile;
         const char* CurrentTestName;
@@ -82,6 +97,21 @@ void testUnitySizeInitializationReminder(void)
         UNITY_COUNTER_TYPE CurrentTestIgnored;
         jmp_buf AbortFrame;
     } _Expected_Unity;
+#else
+    struct {
+        const char* TestFile;
+        const char* CurrentTestName;
+        const char* CurrentDetails1;
+        const char* CurrentDetails2;
+        UNITY_LINE_TYPE CurrentTestLineNumber;
+        UNITY_COUNTER_TYPE NumberOfTests;
+        UNITY_COUNTER_TYPE TestFailures;
+        UNITY_COUNTER_TYPE TestIgnores;
+        UNITY_COUNTER_TYPE CurrentTestFailed;
+        UNITY_COUNTER_TYPE CurrentTestIgnored;
+        jmp_buf AbortFrame;
+    } _Expected_Unity;
+#endif
 
     /* Compare our fake structure's size to the actual structure's size. They
      * should be the same.
@@ -89,6 +119,12 @@ void testUnitySizeInitializationReminder(void)
      * This accounts for alignment, padding, and packing issues that might come
      * up between different architectures. */
     TEST_ASSERT_EQUAL_MESSAGE(sizeof(_Expected_Unity), sizeof(Unity), message);
+}
+
+void testPassShouldEndImmediatelyWithPass(void)
+{
+    TEST_PASS();
+    TEST_FAIL_MESSAGE("We should have passed already and finished this test");
 }
 
 void testTrue(void)
@@ -1176,6 +1212,12 @@ void testINT32sNotWithinDelta(void)
     VERIFY_FAILS_END
 }
 
+void testINT32sNotWithinDeltaAndDifferenceOverflows(void)
+{
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_INT32_WITHIN(1, -1, 0x7FFFFFFF);
+    VERIFY_FAILS_END
+}
 void testINT32sNotWithinDeltaAndCustomMessage(void)
 {
     EXPECT_ABORT_BEGIN
@@ -1339,7 +1381,7 @@ void testNotEqualString4(void)
 void testNotEqualStringLen4(void)
 {
     EXPECT_ABORT_BEGIN
-    TEST_ASSERT_EQUAL_STRING_LEN("bar\r", "bar\n", 4);
+    TEST_ASSERT_EQUAL_STRING_LEN("ba\r\x16", "ba\r\n", 4);
     VERIFY_FAILS_END
 }
 
@@ -1359,10 +1401,24 @@ void testNotEqualString_ExpectedStringIsNull(void)
     VERIFY_FAILS_END
 }
 
+void testNotEqualStringLen_ExpectedStringIsNull(void)
+{
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_STRING_LEN(NULL, "bar", 1);
+    VERIFY_FAILS_END
+}
+
 void testNotEqualString_ActualStringIsNull(void)
 {
     EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_STRING("foo", NULL);
+    VERIFY_FAILS_END
+}
+
+void testNotEqualStringLen_ActualStringIsNull(void)
+{
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_STRING_LEN("foo", NULL, 1);
     VERIFY_FAILS_END
 }
 
@@ -1445,6 +1501,16 @@ void testEqualStringArrayIfBothNulls(void)
     TEST_ASSERT_EQUAL_STRING_ARRAY(expStrings, testStrings, 4);
 }
 
+void testNotEqualStringArrayLengthZero(void)
+{
+    const char *testStrings[] = {NULL};
+    const char **expStrings = NULL;
+
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_STRING_ARRAY(expStrings, testStrings, 0);
+    VERIFY_FAILS_END
+}
+
 void testEqualMemory(void)
 {
     const char *testString = "whatever";
@@ -1485,6 +1551,13 @@ void testNotEqualMemory4(void)
     VERIFY_FAILS_END
 }
 
+void testNotEqualMemoryLengthZero(void)
+{
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_MEMORY(NULL, NULL, 0);
+    VERIFY_FAILS_END
+}
+
 void testEqualIntArrays(void)
 {
     int p0[] = {1, 8, 987, -2};
@@ -1497,6 +1570,7 @@ void testEqualIntArrays(void)
     TEST_ASSERT_EQUAL_INT_ARRAY(p0, p1, 4);
     TEST_ASSERT_EQUAL_INT_ARRAY(p0, p2, 3);
     TEST_ASSERT_EQUAL_INT_ARRAY(p0, p3, 1);
+    TEST_ASSERT_EQUAL_INT_ARRAY(NULL, NULL, 1);
 }
 
 void testNotEqualIntArraysNullExpected(void)
@@ -1546,6 +1620,16 @@ void testNotEqualIntArrays3(void)
 
     EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_INT_ARRAY(p0, p1, 4);
+    VERIFY_FAILS_END
+}
+
+void testNotEqualIntArraysLengthZero(void)
+{
+    _UU32 p0[1] = {1};
+    _UU32 p1[1] = {1};
+
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_INT_ARRAY(p0, p1, 0);
     VERIFY_FAILS_END
 }
 
@@ -2142,7 +2226,141 @@ void testIgnoredAndThenFailInTearDown(void)
     TEST_IGNORE();
 }
 
+// Tricky series of macros to set USING_OUTPUT_SPY
+#define USING_SPY_AS(a)           EXPAND_AND_USE_2ND(ASSIGN_VALUE(a), 0)
+#define ASSIGN_VALUE(a)           VAL_##a
+#define VAL_putcharSpy            0, 1
+#define EXPAND_AND_USE_2ND(a, b)  SECOND_PARAM(a, b, throwaway)
+#define SECOND_PARAM(a, b, ...)   b
+#if USING_SPY_AS(UNITY_OUTPUT_CHAR)
+  #define USING_OUTPUT_SPY // true only if UNITY_OUTPUT_CHAR = putcharSpy
+#endif
+
+#ifdef USING_OUTPUT_SPY
+#include <stdio.h>
+#define SPY_BUFFER_MAX 40
+static char putcharSpyBuffer[SPY_BUFFER_MAX];
+#endif
+static int indexSpyBuffer;
+static int putcharSpyEnabled;
+
+void startPutcharSpy(void) {indexSpyBuffer = 0; putcharSpyEnabled = 1;}
+
+void endPutcharSpy(void) {putcharSpyEnabled = 0;}
+
+char* getBufferPutcharSpy(void)
+{
+#ifdef USING_OUTPUT_SPY
+    putcharSpyBuffer[indexSpyBuffer] = '\0';
+    return putcharSpyBuffer;
+#else
+    return NULL;
+#endif
+}
+
+void putcharSpy(int c)
+{
+#ifdef USING_OUTPUT_SPY
+    if (putcharSpyEnabled)
+    {
+        if (indexSpyBuffer < SPY_BUFFER_MAX - 1)
+            putcharSpyBuffer[indexSpyBuffer++] = (char)c;
+    } else
+        c = putchar(c);
+#endif
+}
+
+void testFailureCountIncrementsAndIsReturnedAtEnd(void)
+{
+    Unity.CurrentTestFailed = 1;
+    startPutcharSpy(); // Suppress output
+    UnityConcludeTest();
+    TEST_ASSERT_EQUAL(1, Unity.TestFailures);
+
+    int failures = UnityEnd();
+    Unity.TestFailures--;
+    endPutcharSpy();
+    TEST_ASSERT_EQUAL(1, failures);
+}
+
+void testCstringsEscapeSequence(void)
+{
+    startPutcharSpy();
+    UnityPrint("\x16\x10");
+    endPutcharSpy();
+    TEST_ASSERT_EQUAL_STRING("\\x16\\x10", getBufferPutcharSpy());
+}
+
+#define TEST_ASSERT_EQUAL_PRINT_NUMBERS(expected, actual) {             \
+        startPutcharSpy(); UnityPrintNumber((actual)); endPutcharSpy(); \
+        TEST_ASSERT_EQUAL_STRING((expected), getBufferPutcharSpy());    \
+        }
+
+#define TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS(expected, actual) {            \
+        startPutcharSpy(); UnityPrintNumberUnsigned((actual)); endPutcharSpy(); \
+        TEST_ASSERT_EQUAL_STRING((expected), getBufferPutcharSpy());            \
+        }
+
+void testPrintNumbers32(void)
+{
+#ifndef USING_OUTPUT_SPY
+    TEST_IGNORE_MESSAGE("Compile with '-D UNITY_OUTPUT_CHAR=putcharSpy' to enable print testing");
+#else
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("0", 0);
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("1", 1);
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("-1", -1);
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("2000000000", 2000000000);
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("-2147483648", (_US32)0x80000000);
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("-1",          (_US32)0xFFFFFFFF);
+#endif
+}
+
+void testPrintNumbersUnsigned32(void)
+{
+#ifndef USING_OUTPUT_SPY
+    TEST_IGNORE();
+#else
+    TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS("0", 0);
+    TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS("1", 1);
+    TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS("1500000000", 1500000000);
+    TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS("2147483648", (_UU32)0x80000000);
+    TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS("4294967295", (_UU32)0xFFFFFFFF);
+#endif
+}
+
 // ===================== THESE TEST WILL RUN IF YOUR CONFIG INCLUDES 64 BIT SUPPORT ==================
+
+void testPrintNumbersInt64(void)
+{
+#ifndef UNITY_SUPPORT_64
+    TEST_IGNORE();
+#else
+  #ifndef USING_OUTPUT_SPY
+    TEST_IGNORE();
+  #else
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("0", 0);
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("10000000000", 10000000000);
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("-9223372036854775808", (_U_SINT)0x8000000000000000);
+    TEST_ASSERT_EQUAL_PRINT_NUMBERS("-1", (_U_SINT)0xFFFFFFFFFFFFFFFF);
+  #endif
+#endif
+}
+
+void testPrintNumbersUInt64(void)
+{
+#ifndef UNITY_SUPPORT_64
+    TEST_IGNORE();
+#else
+  #ifndef USING_OUTPUT_SPY
+    TEST_IGNORE();
+  #else
+    TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS("0", 0);
+    TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS("70000000000", 70000000000);
+    TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS("9223372036854775808",  (_U_UINT)0x8000000000000000);
+    TEST_ASSERT_EQUAL_PRINT_UNSIGNED_NUMBERS("18446744073709551615", (_U_UINT)0xFFFFFFFFFFFFFFFF);
+  #endif
+#endif
+}
 
 void testEqualHex64s(void)
 {
@@ -2366,6 +2584,17 @@ void testINT64sNotWithinDelta(void)
 #endif
 }
 
+void testINT64sNotWithinDeltaAndDifferenceOverflows(void)
+{
+#ifndef UNITY_SUPPORT_64
+    TEST_IGNORE();
+#else
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_INT64_WITHIN(1, 0x8000000000000000, 0x7FFFFFFFFFFFFFFF);
+    VERIFY_FAILS_END
+#endif
+}
+
 void testEqualHEX64Arrays(void)
 {
 #ifndef UNITY_SUPPORT_64
@@ -2568,14 +2797,12 @@ void testFloatsNotEqualExpectedNaN(void)
 #endif
 }
 
-void testFloatsNotEqualBothNaN(void)
+void testFloatsEqualBothNaN(void)
 {
 #ifdef UNITY_EXCLUDE_FLOAT
     TEST_IGNORE();
 #else
-    EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_FLOAT(0.0f / f_zero, 0.0f / f_zero);
-    VERIFY_FAILS_END
 #endif
 }
 
@@ -2623,14 +2850,12 @@ void testFloatsNotEqualExpectedInf(void)
 #endif
 }
 
-void testFloatsNotEqualBothInf(void)
+void testFloatsEqualBothInf(void)
 {
 #ifdef UNITY_EXCLUDE_FLOAT
     TEST_IGNORE();
 #else
-    EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_FLOAT(1.0f / f_zero, 1.0f / f_zero);
-    VERIFY_FAILS_END
 #endif
 }
 
@@ -2822,6 +3047,18 @@ void testFloatIsNotDeterminate2(void)
 #endif
 }
 
+void testFloatTraitFailsOnInvalidTrait(void)
+{
+#ifdef UNITY_EXCLUDE_FLOAT
+    TEST_IGNORE();
+#else
+    EXPECT_ABORT_BEGIN
+    UnityAssertFloatSpecial(1.0f, NULL, __LINE__, UNITY_FLOAT_INVALID_TRAIT);
+    VERIFY_FAILS_END
+#endif
+}
+
+
 void testEqualFloatArrays(void)
 {
 #ifdef UNITY_EXCLUDE_FLOAT
@@ -2837,6 +3074,7 @@ void testEqualFloatArrays(void)
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(p0, p1, 4);
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(p0, p2, 3);
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(p0, p3, 1);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(NULL, NULL, 1);
 #endif
 }
 
@@ -2952,7 +3190,7 @@ void testNotEqualFloatArraysNegative3(void)
 #endif
 }
 
-void testNotEqualFloatArraysNaN(void)
+void testEqualFloatArraysNaN(void)
 {
 #ifdef UNITY_EXCLUDE_FLOAT
     TEST_IGNORE();
@@ -2960,13 +3198,11 @@ void testNotEqualFloatArraysNaN(void)
     float p0[] = {1.0f, 0.0f / f_zero, 25.4f, 0.253f};
     float p1[] = {1.0f, 0.0f / f_zero, 25.4f, 0.253f};
 
-    EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(p0, p1, 4);
-    VERIFY_FAILS_END
 #endif
 }
 
-void testNotEqualFloatArraysInf(void)
+void testEqualFloatArraysInf(void)
 {
 #ifdef UNITY_EXCLUDE_FLOAT
     TEST_IGNORE();
@@ -2974,8 +3210,20 @@ void testNotEqualFloatArraysInf(void)
     float p0[] = {1.0f, 1.0f / f_zero, 25.4f, 0.253f};
     float p1[] = {1.0f, 1.0f / f_zero, 25.4f, 0.253f};
 
-    EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(p0, p1, 4);
+#endif
+}
+
+void testNotEqualFloatArraysLengthZero(void)
+{
+#ifdef UNITY_EXCLUDE_FLOAT
+    TEST_IGNORE();
+#else
+    float p0[1] = {0.0f};
+    float p1[1] = {0.0f};
+
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(p0, p1, 0);
     VERIFY_FAILS_END
 #endif
 }
@@ -3073,14 +3321,12 @@ void testDoublesNotEqualExpectedNaN(void)
 #endif
 }
 
-void testDoublesNotEqualBothNaN(void)
+void testDoublesEqualBothNaN(void)
 {
 #ifdef UNITY_EXCLUDE_DOUBLE
     TEST_IGNORE();
 #else
-    EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_DOUBLE(0.0 / d_zero, 0.0 / d_zero);
-    VERIFY_FAILS_END
 #endif
 }
 
@@ -3128,14 +3374,12 @@ void testDoublesNotEqualExpectedInf(void)
 #endif
 }
 
-void testDoublesNotEqualBothInf(void)
+void testDoublesEqualBothInf(void)
 {
 #ifdef UNITY_EXCLUDE_DOUBLE
     TEST_IGNORE();
 #else
-    EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_DOUBLE(1.0 / d_zero, 1.0 / d_zero);
-    VERIFY_FAILS_END
 #endif
 }
 
@@ -3327,6 +3571,17 @@ void testDoubleIsNotDeterminate2(void)
 #endif
 }
 
+void testDoubleTraitFailsOnInvalidTrait(void)
+{
+#ifdef UNITY_EXCLUDE_DOUBLE
+    TEST_IGNORE();
+#else
+    EXPECT_ABORT_BEGIN
+    UnityAssertDoubleSpecial(1.0, NULL, __LINE__, UNITY_FLOAT_INVALID_TRAIT);
+    VERIFY_FAILS_END
+#endif
+}
+
 void testEqualDoubleArrays(void)
 {
 #ifdef UNITY_EXCLUDE_DOUBLE
@@ -3342,6 +3597,7 @@ void testEqualDoubleArrays(void)
     TEST_ASSERT_EQUAL_DOUBLE_ARRAY(p0, p1, 4);
     TEST_ASSERT_EQUAL_DOUBLE_ARRAY(p0, p2, 3);
     TEST_ASSERT_EQUAL_DOUBLE_ARRAY(p0, p3, 1);
+    TEST_ASSERT_EQUAL_DOUBLE_ARRAY(NULL, NULL, 1);
 #endif
 }
 
@@ -3465,13 +3721,11 @@ void testNotEqualDoubleArraysNaN(void)
     double p0[] = {1.0, 0.0 / d_zero, 25.4, 0.253};
     double p1[] = {1.0, 0.0 / d_zero, 25.4, 0.253};
 
-    EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_DOUBLE_ARRAY(p0, p1, 4);
-    VERIFY_FAILS_END
 #endif
 }
 
-void testNotEqualDoubleArraysInf(void)
+void testEqualDoubleArraysInf(void)
 {
 #ifdef UNITY_EXCLUDE_DOUBLE
     TEST_IGNORE();
@@ -3479,8 +3733,75 @@ void testNotEqualDoubleArraysInf(void)
     double p0[] = {1.0, 1.0 / d_zero, 25.4, 0.253};
     double p1[] = {1.0, 1.0 / d_zero, 25.4, 0.253};
 
-    EXPECT_ABORT_BEGIN
     TEST_ASSERT_EQUAL_DOUBLE_ARRAY(p0, p1, 4);
+#endif
+}
+
+void testNotEqualDoubleArraysLengthZero(void)
+{
+#ifdef UNITY_EXCLUDE_DOUBLE
+    TEST_IGNORE();
+#else
+    double p0[1] = {0.0};
+    double p1[1] = {0.0};
+
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_DOUBLE_ARRAY(p0, p1, 0);
+    VERIFY_FAILS_END
+#endif
+}
+
+// ===================== THESE TEST WILL RUN IF YOUR CONFIG INCLUDES DETAIL SUPPORT ==================
+
+void testThatDetailsCanBeHandleOneDetail(void)
+{
+#ifdef UNITY_EXCLUDE_DETAILS
+    TEST_IGNORE();
+#else
+    UNITY_SET_DETAIL("Detail1");
+
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_INT_MESSAGE(5, 6, "Should Fail And Say Detail1");
+    VERIFY_FAILS_END
+#endif
+}
+
+void testThatDetailsCanHandleTestFail(void)
+{
+#ifdef UNITY_EXCLUDE_DETAILS
+    TEST_IGNORE();
+#else
+    UNITY_SET_DETAILS("Detail1","Detail2");
+
+    EXPECT_ABORT_BEGIN
+    TEST_FAIL_MESSAGE("Should Fail And Say Detail1 and Detail2");
+    VERIFY_FAILS_END
+#endif
+}
+
+void testThatDetailsCanBeHandleTwoDetails(void)
+{
+#ifdef UNITY_EXCLUDE_DETAILS
+    TEST_IGNORE();
+#else
+    UNITY_SET_DETAILS("Detail1","Detail2");
+
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(7, 8, "Should Fail And Say Detail1 and Detail2");
+    VERIFY_FAILS_END
+#endif
+}
+
+void testThatDetailsCanBeHandleSingleDetailClearingTwoDetails(void)
+{
+#ifdef UNITY_EXCLUDE_DETAILS
+    TEST_IGNORE();
+#else
+    UNITY_SET_DETAILS("Detail1","Detail2");
+    UNITY_SET_DETAIL("DetailNew");
+
+    EXPECT_ABORT_BEGIN
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("MEH", "GUH", "Should Fail And Say DetailNew");
     VERIFY_FAILS_END
 #endif
 }
